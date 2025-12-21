@@ -8,9 +8,10 @@ from jose import jwt, JWTError
 from datetime import datetime, timedelta
 from .database import engine
 from .database import get_db
-from .models import Base
+from .models import Base, Workout
 from .models import User
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 SECRET_KEY = "super-secret-key-change-later" #this goes into env later
 ALGORITHM = "HS256"
@@ -68,7 +69,24 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
 
-@app.get("/users")
+class UserResponse(BaseModel):
+    id: int
+    email: str
+
+class WorkoutCreate(BaseModel):
+    exercise: str
+    reps: int
+    weight: int
+    date: str
+
+class WorkoutResponse(BaseModel):
+    id: int
+    exercise: str
+    reps: int
+    weight: int
+    date: str
+
+@app.get("/users", response_model=list[UserResponse])
 def get_users(
     current_user: str = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -124,3 +142,59 @@ def login(user: RegisterRequest, db: Session = Depends(get_db)):
         "access_token": access_token,
         "token_type": "bearer"
     }
+
+@app.post("/Workout")
+def create_workout(
+    workout: WorkoutCreate,
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == current_user).first()
+
+    if not user:
+        return {"message": "User not found."}
+    
+    new_workout = Workout(
+        user_id=user.id,
+        exercise=workout.exercise,
+        reps=workout.reps,
+        weight=workout.weight,
+        date=workout.date
+    )
+
+    db.add(new_workout)
+    db.commit()
+    db.refresh(new_workout)
+
+    return {"message": "Workout logged successfully."}
+
+@app.get("/workouts", response_model=list[WorkoutResponse])
+def get_workouts(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == current_user).first()
+
+    if not user:
+        return []
+    
+    workouts = db.query(Workout).filter(Workout.user_id == user.id).all()
+    return workouts
+
+@app.get("/workouts/stats")
+def workout_stats(
+    current_user: str = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == current_user).first()
+    if not user:
+        return {}
+    
+    workouts = (
+        db.query(Workout.exercise, func.count(Workout.id))
+        .filter(Workout.user_id == user.id)
+        .group_by(Workout.exercise)
+        .all()
+    )
+
+    return {exercise: count for exercise, count in workouts}
